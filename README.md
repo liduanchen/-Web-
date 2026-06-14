@@ -146,8 +146,8 @@ Web 端直接由 Flask 模板渲染，移动端通过 REST API 获取数据和�
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/liduanchen/--Semiconductor-Epitaxial-Layer-Thin-Film-Optical-Thickness-Measurement-Platform.git
-cd --Semiconductor-Epitaxial-Layer-Thin-Film-Optical-Thickness-Measurement-Platform
+git clone https://github.com/liduanchen/Semiconductor-Epitaxial-Layer-Thin-Film-Optical-Thickness-Measurement-Platform.git
+cd Semiconductor-Epitaxial-Layer-Thin-Film-Optical-Thickness-Measurement-Platform
 
 # 2. 创建虚拟环境
 python -m venv .venv
