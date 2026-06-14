@@ -1,0 +1,387 @@
+{% extends "base.html" %}
+
+{% block title %}EPI-Vision - 全景物理仿真器{% endblock %}
+{% block page_title %}全景物理仿真器{% endblock %}
+{% block page_subtitle %}Optical Path Simulation & Real-time Ray Tracing Engine{% endblock %}
+
+{% block content %}
+<div class="glass-panel" style="margin-bottom: 24px;">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="color: var(--text-secondary); font-size: 14px;">折射率快速填入与仿真预设控制：</span>
+        <select id="presetSel" style="min-width: 260px;">
+            <option value="">— 自定义输入 —</option>
+            <option value="2.6,2.55">SiC (n_film≈2.60, n_sub≈2.55)</option>
+            <option value="3.4,3.55">Si (3.40 / 3.55)</option>
+            <option value="2.35,2.30">GaN (2.35 / 2.30)</option>
+            <option value="3.3,3.45">GaAs (3.30 / 3.45)</option>
+        </select>
+    </div>
+</div>
+
+<div class="grid-2">
+    <!-- Ray Trace -->
+    <div class="glass-panel">
+        <div class="panel-title">介质层光路实时演算 (Snell's Law)</div>
+        <div style="background: #000; border-radius: 8px; overflow: hidden;">
+            <canvas id="rayCanvas" width="500" height="280" style="width:100%; height:auto; display:block;"></canvas>
+        </div>
+    </div>
+
+    <!-- Theoretical Spectrum -->
+    <div class="glass-panel">
+        <div class="panel-title">理论反射光谱图生成 (TMM 示意)</div>
+        <div style="height: 280px; position:relative; width: 100%;">
+            <img id="simSpectrumPlotImg" alt="实验室导入拟合图" style="display:none; width:100%; height:100%; object-fit:contain; background:#131b30; border-radius:8px;">
+            <canvas id="spectrumChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<div class="glass-panel" style="margin-top: 24px;">
+    <div class="panel-title">干涉核心变量调控板</div>
+    <div class="grid-4" style="gap: 24px;">
+        <div class="form-group" style="margin: 0;">
+            <label class="d-label">外延层厚度 (d) <span id="val-thickness" class="val-display">1.0 μm</span></label>
+            <input type="range" id="slider-thickness" min="0" max="100.0" step="0.05" value="1.0" class="mt-1">
+            <input type="number" id="num-thickness" min="0" max="100" step="0.01" value="1.0" class="mt-1">
+        </div>
+        <div class="form-group" style="margin: 0;">
+            <label class="d-label">薄膜折射率 (n₁) <span id="val-n" class="val-display">2.6</span></label>
+            <input type="range" id="slider-n" min="1.2" max="4.5" step="0.02" value="2.6" class="mt-1">
+            <input type="number" id="num-n" min="1" max="6" step="0.01" value="2.6" class="mt-1">
+        </div>
+        <div class="form-group" style="margin: 0;">
+            <label class="d-label">衬底折射率 (n₂) <span id="val-nsub" class="val-display">2.55</span></label>
+            <input type="range" id="slider-nsub" min="1.2" max="4.5" step="0.02" value="2.55" class="mt-1">
+            <input type="number" id="num-nsub" min="1" max="6" step="0.01" value="2.55" class="mt-1">
+        </div>
+        <div class="form-group" style="margin: 0;">
+            <label class="d-label">入射角 (θ) <span id="val-angle" class="val-display">30°</span></label>
+            <input type="range" id="slider-angle" min="0" max="75" step="1" value="30" class="mt-1">
+            <input type="number" id="num-angle" min="0" max="89" step="0.5" value="30" class="mt-1">
+        </div>
+    </div>
+</div>
+
+<div class="glass-panel" style="margin-top: 24px;">
+    <div class="panel-title">导入到实验室的拟合结果</div>
+    <div id="labImportedSummary" class="result-box" style="height:auto; min-height:96px;">
+        当前未从分析面板导入拟合结果，实验室正在显示参数驱动的仿真示意。
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    window.labImportedResult = null;
+    window.labUserTouched = false;
+
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById("presetSel").addEventListener("change", (e) => {
+            const v = e.target.value;
+            if (!v) return;
+            const [a, b] = v.split(",").map(parseFloat);
+            document.getElementById("slider-n").value = a;
+            document.getElementById("slider-nsub").value = b;
+            document.getElementById("num-n").value = a;
+            document.getElementById("num-nsub").value = b;
+            updateSimulation();
+        });
+
+        // Initialize Chart
+        const ctxChart = document.getElementById("spectrumChart").getContext("2d");
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.font.family = 'Inter';
+        
+        window.specChart = new Chart(ctxChart, {
+            type: "line",
+            data: { datasets: [] },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: { duration: 0 },
+                scales: {
+                    x: { type: 'linear', title: { display: true, text: "波数 (cm⁻¹)" }, grid: { color: "rgba(51, 65, 85, 0.5)" } },
+                    y: { min: 0, max: 100, grid: { color: "rgba(51, 65, 85, 0.5)" } }
+                },
+                plugins: { legend: { display: true, position: 'top', labels: { color: '#e2e8f0' } } }
+            }
+        });
+
+        bindSliderNum("slider-thickness", "num-thickness");
+        bindSliderNum("slider-n", "num-n");
+        bindSliderNum("slider-nsub", "num-nsub");
+        bindSliderNum("slider-angle", "num-angle");
+
+        // 用户一旦手动改动参数，就不再强制覆盖为“导入拟合参数”
+        ["slider-thickness","num-thickness","slider-n","num-n","slider-nsub","num-nsub","slider-angle","num-angle"].forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.addEventListener("input", () => { window.labUserTouched = true; });
+            el.addEventListener("change", () => { window.labUserTouched = true; });
+        });
+
+        // Parse URL parameters for "Import to Lab" feature
+        const params = new URLSearchParams(window.location.search);
+        if (params.has('thickness')) {
+            document.getElementById('slider-thickness').value = parseFloat(params.get('thickness'));
+            document.getElementById('num-thickness').value = parseFloat(params.get('thickness'));
+        }
+        if (params.has('n')) {
+            document.getElementById('slider-n').value = parseFloat(params.get('n'));
+            document.getElementById('num-n').value = parseFloat(params.get('n'));
+        }
+        if (params.has('nsub')) {
+            document.getElementById('slider-nsub').value = parseFloat(params.get('nsub'));
+            document.getElementById('num-nsub').value = parseFloat(params.get('nsub'));
+        }
+        if (params.has('angle')) {
+            document.getElementById('slider-angle').value = parseFloat(params.get('angle'));
+            document.getElementById('num-angle').value = parseFloat(params.get('angle'));
+        }
+
+        window.expData = null;
+        try {
+            const cached = sessionStorage.getItem('epi_lab_import');
+            if (cached) {
+                const payload = JSON.parse(cached);
+                if (payload && payload.analysis) {
+                    window.labImportedResult = payload.analysis;
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to parse lab import cache', e);
+        }
+
+        // 若存在“从分析面板导入的拟合结果”，则实验室默认以该拟合参数作为调控板初始值
+        // 这样光路/光谱三块都直接对准拟合效果
+        if (window.labImportedResult && !window.labUserTouched) {
+            applyImportedParamsToControls(window.labImportedResult);
+        }
+
+        if (params.has('material') && params.has('angle')) {
+            const mat = params.get('material');
+            const ang = params.get('angle');
+            fetch(`/api/dataset_data?material=${encodeURIComponent(mat)}&angle=${ang}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.ok) {
+                        window.expData = data;
+                        updateSimulation();
+                    }
+                }).catch(e => console.error("Failed to load experimental data", e));
+        }
+        // 如果导入结果本身携带了实验/拟合曲线，则不依赖额外 fetch，也能立即展示拟合效果
+        if (window.labImportedResult && window.labImportedResult.x && window.labImportedResult.y) {
+            window.expData = {
+                ok: true,
+                x: window.labImportedResult.x,
+                y: window.labImportedResult.y
+            };
+        }
+
+        try {
+            updateSimulation();
+        } catch(e) {
+            console.error("Simulation failed to initialize:", e);
+        }
+    });
+
+    const canvas = document.getElementById("rayCanvas");
+
+    function drawRaySchematic(thickness, nFilm, nSub, angleDeg) {
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const w = canvas.width, h = canvas.height;
+        const airH = h * 0.35;
+        // 使用对数映射计算视觉高度，支持 0~100μm 的大跨度厚度变化，动态感适中
+        const filmH = 20 + (Math.log1p(thickness) / Math.log1p(100.0)) * 120;
+        const startY = airH, endY = airH + filmH;
+
+        // Draw mediums
+        ctx.fillStyle = "#020617"; ctx.fillRect(0, 0, w, airH);
+        
+        // Use current theme accent color somewhat
+        let rootStyles = getComputedStyle(document.documentElement);
+        let accentC = rootStyles.getPropertyValue('--accent-primary').trim() || '#3b82f6';
+        
+        // Convert to rgba for alpha
+        let tempEl = document.createElement('div');
+        tempEl.style.color = accentC;
+        document.body.appendChild(tempEl);
+        let rgb = getComputedStyle(tempEl).color;
+        document.body.removeChild(tempEl);
+        let rgbaStr = rgb.replace('rgb', 'rgba').replace(')', ', 0.15)');
+        
+        ctx.fillStyle = rgbaStr || "rgba(56, 189, 248, 0.15)"; ctx.fillRect(0, startY, w, filmH);
+        ctx.fillStyle = "rgba(148, 163, 184, 0.1)"; ctx.fillRect(0, endY, w, h - endY);
+
+        ctx.fillStyle = "#cbd5e1"; ctx.font = "12px Inter";
+        ctx.fillText("空气 (Air) n₀ = 1.0", 10, 20);
+        ctx.fillText(`薄膜 n₁ = ${nFilm.toFixed(2)}, d = ${thickness.toFixed(2)} μm`, 10, startY + 18);
+        ctx.fillText(`衬底 n₂ = ${nSub.toFixed(2)}`, 10, endY + 20);
+
+        const angleRad = angleDeg * Math.PI / 180;
+        const sinTh1 = (1.0 * Math.sin(angleRad)) / nFilm;
+        const th1Rad = Math.asin(Math.max(-1, Math.min(1, sinTh1)));
+
+        const pt1_x = w * 0.35;
+        const pt1_y = startY;
+        const L = 200;
+
+        const drawLine = (x1, y1, x2, y2, color, width=2, dash=[]) => {
+            ctx.beginPath(); ctx.setLineDash(dash); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+            ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke(); ctx.setLineDash([]);
+        };
+
+        // Normal
+        drawLine(pt1_x, pt1_y - 60, pt1_x, endY + 20, "rgba(255,255,255,0.2)", 1, [5,5]);
+        
+        // Incident Ray & Reflection
+        drawLine(pt1_x - L*Math.sin(angleRad), pt1_y - L*Math.cos(angleRad), pt1_x, pt1_y, "#facc15", 3);
+        drawLine(pt1_x, pt1_y, pt1_x + L*Math.sin(angleRad), pt1_y - L*Math.cos(angleRad), "#facc15", 3);
+
+        // Substrate transmission
+        const pt2_x = pt1_x + filmH * Math.tan(th1Rad);
+        const pt2_y = endY;
+        drawLine(pt1_x, pt1_y, pt2_x, pt2_y, "#f87171", 2);
+        
+        // Substrate reflection
+        const pt3_x = pt2_x + filmH * Math.tan(th1Rad);
+        const pt3_y = startY;
+        drawLine(pt2_x, pt2_y, pt3_x, pt3_y, "#f87171", 2);
+        
+        // Final escape ray
+        drawLine(pt3_x, pt3_y, pt3_x + L*Math.sin(angleRad), pt3_y - L*Math.cos(angleRad), "#f87171", 2);
+        
+        // Second Normal
+        drawLine(pt3_x, startY, pt3_x, startY - 40, "rgba(255,255,255,0.2)", 1, [5,5]);
+    }
+
+    function bindSliderNum(sid, nid) {
+        const s = document.getElementById(sid), n = document.getElementById(nid);
+        const go = (fromS) => { if (fromS) n.value = s.value; else s.value = n.value; updateSimulation(); };
+        s.addEventListener("input", () => go(true));
+        n.addEventListener("input", () => go(false));
+    }
+
+    function updateSimulation() {
+        // 导入拟合结果优先：在用户未手动修改前，始终以拟合参数驱动三块展示
+        const imported = window.labImportedResult;
+        if (imported && !window.labUserTouched) {
+            applyImportedParamsToControls(imported);
+        }
+
+        const d = parseFloat(document.getElementById("slider-thickness").value);
+        const n = parseFloat(document.getElementById("slider-n").value);
+        const nSub = parseFloat(document.getElementById("slider-nsub").value);
+        const angle = parseFloat(document.getElementById("slider-angle").value);
+
+        document.getElementById("val-thickness").textContent = d.toFixed(2) + " μm";
+        document.getElementById("val-n").textContent = n.toFixed(2);
+        document.getElementById("val-nsub").textContent = nSub.toFixed(2);
+        document.getElementById("val-angle").textContent = angle + "°";
+
+        drawRaySchematic(d, n, nSub, angle);
+        updateImportedSummary(d, n, nSub, angle);
+
+        // 光谱：优先展示“导入拟合曲线”以便直观看拟合效果
+        // - 若 imported.fit_y 存在：使用 fit_y 作为理论拟合曲线（橙色虚线）
+        // - 否则：退化为原先的参数驱动示意曲线（紫色）
+        let datasets = [];
+
+        if (window.expData) {
+            const expPts = window.expData.x.map((xVal, i) => ({x: xVal, y: window.expData.y[i]}));
+            datasets.push({
+                label: "实验光谱", data: expPts,
+                borderColor: "#22d3ee", backgroundColor: "rgba(34, 211, 238, 0.1)",
+                borderWidth: 2.2, pointRadius: 0, fill: true, tension: 0.08
+            });
+        }
+
+        if (imported && imported.x && imported.fit_y && imported.fit_y.length === imported.x.length) {
+            const fitPts = imported.x.map((xVal, i) => ({x: xVal, y: imported.fit_y[i]}));
+            datasets.push({
+                label: "理论拟合 (导入)", data: fitPts,
+                borderColor: "#f59e0b", borderDash: [6,4],
+                borderWidth: 2.2, pointRadius: 0, fill: false, tension: 0.08
+            });
+            if (imported.peaks_x && imported.peaks_y && imported.peaks_x.length) {
+                const peaks = imported.peaks_x.map((xVal, i) => ({x: xVal, y: imported.peaks_y[i]}));
+                datasets.push({
+                    label: "干涉峰", data: peaks,
+                    borderColor: "#ef4444", backgroundColor: "#ef4444",
+                    pointBorderColor: "#f8fafc", pointBorderWidth: 1.2,
+                    borderWidth: 2, pointRadius: 5.5, pointHoverRadius: 7, showLine: false, type: "scatter"
+                });
+            }
+        } else {
+            const theoData = [];
+            const angleRad = angle * Math.PI / 180;
+            const cos_theta_prime = Math.cos(Math.asin(Math.min(1, Math.sin(angleRad) / n)));
+            for (let x = 1000; x <= 3000; x += 10) {
+                const phase = 4 * Math.PI * x * n * d * cos_theta_prime / 10000;
+                const base = 48 + 6 * (nSub - n);
+                theoData.push({x: x, y: Math.max(5, Math.min(95, base + 20 * Math.cos(phase)))});
+            }
+            datasets.push({ label: "理论反射率 (示意)", data: theoData, borderColor: "#a78bfa", borderWidth: 2, pointRadius: 0, tension: 0.35 });
+        }
+        
+        const img = document.getElementById('simSpectrumPlotImg');
+        const chartCanvas = document.getElementById('spectrumChart');
+        const usingImportedFit =
+            imported &&
+            Math.abs((imported.thickness || 0) - d) < 1e-6 &&
+            Math.abs((imported.n_film || 0) - n) < 1e-6 &&
+            Math.abs((imported.n_sub || 0) - nSub) < 1e-6 &&
+            Math.abs((imported.angle || 0) - angle) < 1e-6;
+
+        if (usingImportedFit && imported.spectrum_plot_b64) {
+            img.src = 'data:image/png;base64,' + imported.spectrum_plot_b64;
+            img.style.display = 'block';
+            chartCanvas.style.display = 'none';
+            return;
+        }
+
+        if (img) {
+            img.removeAttribute('src');
+            img.style.display = 'none';
+        }
+        chartCanvas.style.display = 'block';
+        window.specChart.data.datasets = datasets;
+        window.specChart.update();
+    }
+
+    function applyImportedParamsToControls(imported) {
+        if (!imported) return;
+        const set = (sid, nid, v) => {
+            const s = document.getElementById(sid);
+            const n = document.getElementById(nid);
+            if (s) s.value = v;
+            if (n) n.value = v;
+        };
+        if (typeof imported.thickness === "number") set("slider-thickness", "num-thickness", imported.thickness);
+        if (typeof imported.n_film === "number") set("slider-n", "num-n", imported.n_film);
+        if (typeof imported.n_sub === "number") set("slider-nsub", "num-nsub", imported.n_sub);
+        if (typeof imported.angle === "number") set("slider-angle", "num-angle", imported.angle);
+    }
+
+    function updateImportedSummary(d, n, nSub, angle) {
+        const el = document.getElementById('labImportedSummary');
+        const imported = window.labImportedResult;
+        if (!el) return;
+        if (!imported) {
+            el.textContent = '当前未从分析面板导入拟合结果，实验室正在显示参数驱动的仿真示意。';
+            return;
+        }
+
+        const sameState =
+            Math.abs((imported.thickness || 0) - d) < 1e-6 &&
+            Math.abs((imported.n_film || 0) - n) < 1e-6 &&
+            Math.abs((imported.n_sub || 0) - nSub) < 1e-6 &&
+            Math.abs((imported.angle || 0) - angle) < 1e-6;
+
+        el.textContent = sameState
+            ? `当前实验室正在显示从分析面板导入的拟合结果: ${imported.material || '未知材料'} | 厚度 ${imported.thickness.toFixed(3)} μm | n_film=${imported.n_film.toFixed(3)} | n_sub=${imported.n_sub.toFixed(3)} | 置信度 ${Number(imported.fit_confidence || 0).toFixed(1)}% | MSE ${Number(imported.mse_final || 0).toFixed(5)}`
+            : `已导入一份拟合结果作为参考: ${imported.material || '未知材料'} | 厚度 ${imported.thickness.toFixed(3)} μm。当前你已手动修改实验室参数，因此页面改为显示新的仿真/叠加曲线，而非原始拟合参数锁定状态。`;
+    }
+</script>
+{% endblock %}

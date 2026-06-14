@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+
+{% block title %}EPI-Vision - 分析记录溯源{% endblock %}
+{% block page_title %}历史分析数据流{% endblock %}
+{% block page_subtitle %}Analytical Traces & Experiment Snapshots{% endblock %}
+
+{% block content %}
+<div class="dash-grid">
+    <!-- List -->
+    <div class="glass-panel" style="overflow-y: auto; max-height: 75vh;">
+        <div class="panel-title">历史快照索引</div>
+        <div id="historyList" style="display:flex; flex-direction:column; gap:8px;">
+            <div style="color:var(--text-muted); text-align:center;">加载中...</div>
+        </div>
+    </div>
+
+    <!-- Detail View -->
+    <div class="glass-panel" style="display:flex; flex-direction:column;" id="detailPane">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+            <div class="panel-title" id="d-title" style="margin-bottom:0;">详情面板</div>
+            <button
+                class="btn btn-outline"
+                id="btn-download-history-plot"
+                style="padding:6px 12px; font-size:12px;"
+                onclick="downloadHistoryPlot()"
+                disabled
+            >
+                下载光谱 PNG
+            </button>
+        </div>
+        
+        <div style="flex:1; display:flex; align-items:center; justify-content:center; color:var(--text-muted);" id="d-empty">
+            请从左侧选择一条历史记录进行还原
+        </div>
+        
+        <div id="d-content" style="display:none; flex-direction:column; gap:20px; height: 100%;">
+            <div class="grid-4" style="border-bottom: 1px solid var(--border-color); padding-bottom: 16px;">
+                <div>
+                    <label>测算厚度</label>
+                    <div class="val-display" style="font-size: 20px;" id="dt-thick"></div>
+                </div>
+                <div>
+                    <label>置信度</label>
+                    <div class="val-display hl-purple" style="font-size: 20px;" id="dt-conf"></div>
+                </div>
+                <div>
+                    <label>算法</label>
+                    <div class="val-display hl-green" style="font-size: 16px;" id="dt-alg"></div>
+                </div>
+                <div>
+                    <label>MSE拟合度</label>
+                    <div class="val-display hl-blue" style="font-size: 16px;" id="dt-mse"></div>
+                </div>
+            </div>
+            
+            <div style="flex:1; position:relative; min-height: 320px;">
+                <img id="histPlotImg" alt="历史干涉光谱拟合图" style="display:none; width:100%; height:100%; object-fit:contain; background:#131b30; border-radius:8px;">
+                <canvas id="histChart"></canvas>
+            </div>
+            
+            <div class="result-box" style="height: 120px;" id="dt-params"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let hChart = null;
+    let currentHistoryPlotDataUrl = '';
+    let currentHistoryPlotName = 'history_spectrum.png';
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const ctx = document.getElementById('histChart').getContext('2d');
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.font.family = 'Inter';
+        hChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels:[], datasets:[] },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { position: 'top', labels: { color: '#e2e8f0' } } }
+            }
+        });
+        
+        loadHistoryList();
+    });
+
+    async function loadHistoryList() {
+        try {
+            const res = await api.get('/api/history');
+            const listDiv = document.getElementById('historyList');
+            if(!res.items || res.items.length === 0) {
+                listDiv.innerHTML = '<div style="color:var(--text-muted); text-align:center;">暂无分析记录</div>';
+                return;
+            }
+            
+            listDiv.innerHTML = res.items.map(i => `
+                <div class="history-item" onclick="loadDetail(${i.id}, this)" style="padding: 12px; border-radius: 8px; border: 1px solid var(--border-color); cursor:pointer; transition:all 0.2s;">
+                    <div style="font-weight:600; color:var(--text-primary); margin-bottom:4px;">${i.dataset_name}</div>
+                    <div style="font-size:12px; color:var(--text-muted); display:flex; justify-content:space-between;">
+                        <span>厚度: <span class="val-display">${i.thickness.toFixed(3)}</span></span>
+                        <span>${i.timestamp}</span>
+                    </div>
+                </div>
+            `).join('');
+            
+        } catch(e) { showToast('加载历史记录失败', true); }
+    }
+
+    async function loadDetail(id, el) {
+        // Highlight active
+        document.querySelectorAll('.history-item').forEach(e => {
+            e.style.background = 'transparent'; e.style.borderColor = 'var(--border-color)';
+        });
+        el.style.background = 'rgba(59, 130, 246, 0.1)';
+        el.style.borderColor = 'var(--accent-primary)';
+        
+        document.getElementById('d-empty').style.display = 'none';
+        document.getElementById('d-content').style.display = 'flex';
+        
+        try {
+            const res = await api.get(`/api/history/${id}`);
+            const d = res.data;
+            const r = d.result_json;
+            currentHistoryPlotName = `history_${d.id}_${(d.dataset_name || 'spectrum').replace(/[\\\\/:*?\"<>|\\s]+/g, '_')}.png`;
+            
+            document.getElementById('d-title').innerText = `记录档案 #${d.id} : ${d.dataset_name}`;
+            document.getElementById('dt-thick').innerText = d.thickness.toFixed(3) + ' μm';
+            document.getElementById('dt-conf').innerText = d.fit_confidence.toFixed(1) + '%';
+            document.getElementById('dt-alg').innerText = d.method;
+            document.getElementById('dt-mse').innerText = d.mse.toFixed(5);
+            
+            document.getElementById('dt-params').innerText = `原始调用参数:\n${JSON.stringify(d.parameters_json, null, 2)}`;
+            updateHistorySpectrumView(d, r);
+            
+        } catch(e) {
+            showToast('调阅历史明细失败', true);
+        }
+    }
+
+    function updateHistorySpectrumView(detail, r) {
+        const img = document.getElementById('histPlotImg');
+        const canvas = document.getElementById('histChart');
+        const btn = document.getElementById('btn-download-history-plot');
+        if (detail.spectrum_plot_b64) {
+            currentHistoryPlotDataUrl = 'data:image/png;base64,' + detail.spectrum_plot_b64;
+            img.src = currentHistoryPlotDataUrl;
+            img.style.display = 'block';
+            canvas.style.display = 'none';
+            if (btn) btn.disabled = false;
+            return;
+        }
+
+        currentHistoryPlotDataUrl = '';
+        img.removeAttribute('src');
+        img.style.display = 'none';
+        canvas.style.display = 'block';
+
+        // 兜底: 若后端图不可用，则使用 Chart.js 重绘，保持元素语义一致
+        const rawData = r.x.map((x,i) => ({x, y: r.y[i]}));
+        const fitData = r.x.map((x,i) => ({x, y: r.fit_y[i]}));
+        const peaks = (r.peaks_x || []).map((x,i) => ({x, y: (r.peaks_y || [])[i]}));
+
+        hChart.data.datasets = [
+            {
+                label: '实验光谱 (快照)', data: rawData,
+                borderColor: '#22d3ee', backgroundColor: 'rgba(34, 211, 238, 0.1)',
+                borderWidth: 2.2, pointRadius: 0, fill: true, tension: 0.08
+            },
+            {
+                label: '理论拟合 (快照)', data: fitData,
+                borderColor: '#f59e0b', borderDash: [6,4], borderWidth: 2.1, pointRadius: 0, fill: false, tension: 0.08
+            },
+            {
+                label: '干涉峰 (快照)', data: peaks,
+                borderColor: '#ef4444', backgroundColor: '#ef4444',
+                pointBorderColor: '#f8fafc', pointBorderWidth: 1.2,
+                borderWidth: 2, pointRadius: 6, pointHoverRadius: 8, showLine: false, type: 'scatter'
+            }
+        ];
+        hChart.update();
+        if (btn) btn.disabled = false;
+    }
+
+    function downloadHistoryPlot() {
+        const btn = document.getElementById('btn-download-history-plot');
+        if (btn && btn.disabled) return;
+
+        let url = currentHistoryPlotDataUrl;
+        if (!url) {
+            const canvas = document.getElementById('histChart');
+            if (canvas) {
+                url = canvas.toDataURL('image/png');
+            }
+        }
+        if (!url) {
+            showToast('当前没有可下载的光谱图', true);
+            return;
+        }
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = currentHistoryPlotName || 'history_spectrum.png';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+    }
+</script>
+{% endblock %}

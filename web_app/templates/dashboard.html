@@ -1,0 +1,1120 @@
+{% extends "base.html" %}
+
+{% block title %}EPI-Vision - 核心智能分析面板{% endblock %}
+{% block page_title %}核心智能分析面板{% endblock %}
+{% block page_subtitle %}Enterprise Optical Metrology & Thickness Retrieval{% endblock %}
+
+{% block top_actions %}
+<div style="display:flex; gap:12px">
+    <button class="btn btn-outline" onclick="openImportModal()">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+        导入数据
+    </button>
+    <button class="btn btn-primary" onclick="runAnalysis()">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        执行运算分析
+    </button>
+    <button class="btn btn-outline" id="btn-sync-lab" style="display:none; border-color:var(--accent-primary); color:var(--accent-primary);" onclick="syncToLab()">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3zM5 5c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-5h-2v5H5V7h5V5H5z"/></svg>
+        导入到实验室
+    </button>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="dash-grid">
+    <!-- Left Column: Controls -->
+    <div style="display: flex; flex-direction: column; gap: 24px;">
+        <div class="glass-panel">
+            <div class="panel-title">分析参数设置</div>
+            <div class="form-group">
+                <label>数据集</label>
+                <select id="dataset_sel"></select>
+            </div>
+            
+            <div class="grid-2">
+                <div class="form-group">
+                    <label>算法模式</label>
+                    <select id="method_sel">
+                        <option>峰值间距法（快速）</option>
+                        <option>TMM拟合法（精细）</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>反演模式</label>
+                    <select id="inversion_sel">
+                        <option>固定折射率（反演厚度）</option>
+                        <option>联合反演（厚度+n_film）</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="grid-2">
+                <div class="form-group">
+                    <label class="d-label">
+                        <span>参考材料</span>
+                        <a href="/materials" style="font-size: 11px; color: var(--accent-primary); text-decoration: none;">管理库</a>
+                    </label>
+                    <select id="preset_sel">
+                        <option value="">-- 手动输入 --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>起延波数 (cm⁻¹)</label>
+                    <div style="display:flex; gap:8px;">
+                        <input type="number" id="min_cutoff" value="1500" style="flex:1">
+                        <button class="btn btn-outline" style="padding:4px 8px;" onclick="autoCutoff()" title="自动推荐起点">✨</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="form-group">
+                    <label>薄膜折射率 n_film</label>
+                    <input type="number" id="n_film" value="2.6" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label>衬底折射率 n_sub</label>
+                    <input type="number" id="n_sub" value="2.55" step="0.01">
+                </div>
+            </div>
+
+            <div class="grid-2" style="border-top: 1px solid var(--border-color); padding-top: 16px; margin-top: 8px;">
+                <div class="form-group">
+                    <label>n 联合反演范围</label>
+                    <div style="display:flex; align-items:center; gap:4px">
+                        <input type="number" id="n_min" value="1.8" step="0.1" style="width:100%">
+                        <span style="color:var(--text-muted)">-</span>
+                        <input type="number" id="n_max" value="4.2" step="0.1" style="width:100%">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>寻峰间距</label>
+                    <input type="number" id="peak_dist" value="30">
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-panel">
+            <div class="panel-title">系统回馈</div>
+            <div class="result-box" id="result_terminal">
+                等待执行初始化运算序列...
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Column: Visualizations & KPIs -->
+    <div style="display: flex; flex-direction: column; gap: 24px;">
+        <div class="kpi-row">
+            <div class="kpi-card">
+                <div class="kpi-title">测算外延层厚度</div>
+                <div class="kpi-value hl-green" id="kpi-thick">—</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">拟合置信度</div>
+                <div class="kpi-value hl-purple" id="kpi-conf">—</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">寻获干涉峰数量</div>
+                <div class="kpi-value hl-blue" id="kpi-peaks">—</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">平均波数差 Δν</div>
+                <div class="kpi-value" id="kpi-delta">—</div>
+            </div>
+        </div>
+
+        <div class="glass-panel" style="flex:1; display:flex; flex-direction:column;">
+            <div class="viz-tabs">
+                <button class="viz-tab active" onclick="switchViz(0)">干涉光谱拟合 (2D)</button>
+                <button class="viz-tab" onclick="switchViz(1)">Snell 光路仿真</button>
+                <button class="viz-tab" onclick="switchViz(2)">晶圆均匀性分布 (2D)</button>
+                <button class="viz-tab" onclick="switchViz(3)">3D 原子晶格构型</button>
+                <button class="viz-tab" onclick="switchViz(4)">驻波光场深度解析</button>
+                <button class="viz-tab" onclick="switchViz(5)">动态色散建模 (n-k)</button>
+            </div>
+            
+            <!-- Spectrum: ECharts WebGL (Deep Space aesthetic) -->
+            <div class="viz-container" id="viz-chart">
+                <div id="spectrumCanvas" style="width:100%; height:100%;"></div>
+            </div>
+
+            <!-- Ray Path -->
+            <div class="viz-container" id="viz-ray" style="display: none; border-radius: 12px; overflow: hidden; background: #020617;">
+                <canvas id="rayCanvasDash" style="width:100%; height:100%; display:block;"></canvas>
+            </div>
+            
+            <!-- Wafer Topography -->
+            <div class="viz-container" id="viz-wafer" style="display: none; border-radius: 12px; overflow: hidden; background: #010409; position: relative;">
+                <div id="wafer3DCanvas" style="width:100%; height:100%;"></div>
+                <div style="position: absolute; top: 12px; left: 16px; color:rgba(56, 189, 248, 0.8); font-size:12px; font-weight:600; pointer-events:none; z-index: 10;">
+                    预测算法: 2D 径向基网络高斯面拟合
+                </div>
+            </div>
+
+            <!-- Waterfall Spectrogram / Crystal Lattice -->
+            <div class="viz-container" id="viz-waterfall" style="display: none; border-radius: 12px; overflow: hidden; background: #010409; position: relative;">
+                <div id="waterfall3DCanvas" style="width:100%; height:100%;"></div>
+                <div style="position: absolute; top: 12px; left: 16px; color:rgba(139, 92, 246, 0.8); font-size:12px; font-weight:600; pointer-events:none; z-index: 10;" id="crystal-desc">
+                    模拟原子排布可视化
+                </div>
+            </div>
+
+            <!-- Standing Wave Analysis -->
+            <div class="viz-container" id="viz-fft" style="display: none; border-radius: 12px; overflow: hidden; background: #010409; position: relative;">
+                <div id="fftCanvas" style="width:100%; height:100%;"></div>
+                <div style="position: absolute; top: 12px; left: 16px; color:rgba(16, 185, 129, 0.8); font-size:12px; font-weight:600; pointer-events:none; z-index: 10;">
+                    物理仿真: 内部驻波光场演化 (Standing Wave Intensity)
+                </div>
+            </div>
+
+            <!-- Dispersion Curve Analysis -->
+            <div class="viz-container" id="viz-heatmap" style="display: none; border-radius: 12px; overflow: hidden; background: #010409; position: relative;">
+                <div id="heatmapCanvas" style="width:100%; height:100%;"></div>
+                <div style="position: absolute; top: 12px; left: 16px; color:rgba(14, 165, 233, 0.8); font-size:12px; font-weight:600; pointer-events:none; z-index: 10;">
+                    材料建模: 动态复折射率色散特性 (Refractive Index Model)
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Loading overlay -->
+<div class="loader-overlay" id="loader">
+    <div style="display:flex; flex-direction:column; align-items:center; gap:16px;">
+        <div class="loader-spinner"></div>
+        <div class="val-display" style="font-size: 16px;">多维矩阵逆算中...</div>
+    </div>
+</div>
+
+<!-- Import Modal -->
+<div class="modal-overlay" id="importModal">
+    <div class="modal-content">
+        <h2 style="margin-bottom: 24px; font-family: var(--font-heading);">导入实验室数据</h2>
+        <form id="importForm" onsubmit="submitImport(event)">
+            <div class="form-group">
+                <label>材料名称 (如: SiC)</label>
+                <input type="text" id="imp_material" required>
+            </div>
+            <div class="form-group">
+                <label>入射角 (deg)</label>
+                <input type="number" id="imp_angle" step="0.1" value="10.0" required>
+            </div>
+            <div class="form-group">
+                <label>光谱数据文件 (CSV或Excel)</label>
+                <input type="file" id="imp_file" accept=".csv,.xlsx,.xls" required style="color: var(--text-primary);">
+            </div>
+            <div class="form-group" style="flex-direction:row; align-items:center; gap:10px; margin-top:20px;">
+                <input type="checkbox" id="imp_replace" checked style="width:18px;height:18px;accent-color:var(--accent-primary);">
+                <label for="imp_replace" style="margin:0;">导入前清空此材料同角度的历史数据</label>
+            </div>
+            
+            <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:32px;">
+                <button type="button" class="btn btn-outline" onclick="closeImportModal()">取消</button>
+                <button type="submit" class="btn btn-primary" id="btn-import-submit">执行导入</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Dashboard State
+let spectrumChart = null;
+let lastAnalysisResult = null;
+let latestRunPayload = null;
+
+// Initialize
+document.addEventListener('DOMContentLoaded', async () => {
+    initChart();
+    await loadInitialData();
+    restoreState();
+    resizeRayCanvas();
+    drawRaySchematicDash(1.0, 2.6, 2.55, 10);
+    
+    // Bind preset selector
+    document.getElementById('preset_sel').addEventListener('change', (e) => {
+        if(!e.target.value) return;
+        const [nf, ns] = e.target.value.split(',');
+        document.getElementById('n_film').value = nf;
+        document.getElementById('n_sub').value = ns;
+        saveState();
+    });
+
+    // Auto save state on change
+    const fields = ['dataset_sel', 'method_sel', 'inversion_sel', 'min_cutoff', 'n_film', 'n_sub', 'n_min', 'n_max', 'peak_dist'];
+    fields.forEach(fid => {
+        const el = document.getElementById(fid);
+        if(el) {
+            el.addEventListener('change', saveState);
+            el.addEventListener('input', saveState);
+        }
+    });
+    window.addEventListener('resize', () => {
+        resizeRayCanvas();
+        if (lastAnalysisResult && latestRunPayload) {
+            drawRaySchematicDash(
+                lastAnalysisResult.thickness,
+                lastAnalysisResult.n_film,
+                lastAnalysisResult.n_sub,
+                latestRunPayload.angle_deg
+            );
+        }
+        if (typeof waferChart !== 'undefined' && waferChart) {
+            setTimeout(() => waferChart.resize(), 50);
+        }
+        if (typeof fftChart !== 'undefined' && fftChart) {
+            setTimeout(() => fftChart.resize(), 50);
+        }
+        if (typeof mseHeatmapChart !== 'undefined' && mseHeatmapChart) {
+            setTimeout(() => mseHeatmapChart.resize(), 50);
+        }
+        if (typeof crystalRenderer !== 'undefined' && crystalRenderer) {
+            setTimeout(() => {
+                const host = document.getElementById('viz-waterfall');
+                if (host && crystalCamera) {
+                    crystalCamera.aspect = host.clientWidth / host.clientHeight;
+                    crystalCamera.updateProjectionMatrix();
+                    crystalRenderer.setSize(host.clientWidth, host.clientHeight);
+                }
+            }, 50);
+        }
+    });
+});
+
+function saveState() {
+    const s = {
+        dataset_sel: document.getElementById('dataset_sel').value,
+        method_sel: document.getElementById('method_sel').value,
+        inversion_sel: document.getElementById('inversion_sel').value,
+        min_cutoff: document.getElementById('min_cutoff').value,
+        n_film: document.getElementById('n_film').value,
+        n_sub: document.getElementById('n_sub').value,
+        n_min: document.getElementById('n_min').value,
+        n_max: document.getElementById('n_max').value,
+        peak_dist: document.getElementById('peak_dist').value
+    };
+    localStorage.setItem('epi_dash_state', JSON.stringify(s));
+}
+
+function restoreState() {
+    try {
+        const s = JSON.parse(localStorage.getItem('epi_dash_state'));
+        if(!s) return;
+        const fields = ['method_sel', 'inversion_sel', 'min_cutoff', 'n_film', 'n_sub', 'n_min', 'n_max', 'peak_dist'];
+        fields.forEach(fid => {
+            if(s[fid] !== undefined && document.getElementById(fid)) {
+                document.getElementById(fid).value = s[fid];
+            }
+        });
+        // Handle dataset select separately as its options load async
+        if(s.dataset_sel && document.getElementById('dataset_sel')) {
+            const opts = document.getElementById('dataset_sel').options;
+            for(let i=0; i<opts.length; i++) {
+                if(opts[i].value === s.dataset_sel) {
+                    document.getElementById('dataset_sel').selectedIndex = i;
+                    break;
+                }
+            }
+        }
+    } catch(e) {}
+}
+
+async function loadInitialData() {
+    try {
+        const [dsRes, matRes] = await Promise.all([
+            api.get('/api/datasets'),
+            api.get('/api/materials')
+        ]);
+        
+        const d_sel = document.getElementById('dataset_sel');
+        d_sel.innerHTML = dsRes.items.map(i => `<option value="${i.material}|${i.angle}">${i.name}</option>`).join('') || '<option value="">(无数据)</option>';
+        
+        const p_sel = document.getElementById('preset_sel');
+        p_sel.innerHTML = '<option value="">-- 自定义参数 --</option>' + 
+            matRes.items.map(i => `<option value="${i.n_film},${i.n_sub}">${i.name}</option>`).join('');
+            
+    } catch(e) {
+        showToast('加载数据库参数失败', true);
+    }
+}
+
+// Visuals toggle
+function switchViz(idx) {
+    document.querySelectorAll('.viz-tab').forEach((t, i) => t.classList.toggle('active', i===idx));
+    document.getElementById('viz-chart').style.display = idx === 0 ? 'block' : 'none';
+    document.getElementById('viz-ray').style.display = idx === 1 ? 'block' : 'none';
+    document.getElementById('viz-wafer').style.display = idx === 2 ? 'block' : 'none';
+    document.getElementById('viz-waterfall').style.display = idx === 3 ? 'block' : 'none';
+    document.getElementById('viz-fft').style.display = idx === 4 ? 'block' : 'none';
+    document.getElementById('viz-heatmap').style.display = idx === 5 ? 'block' : 'none';
+    
+    if (idx === 1) {
+        resizeRayCanvas();
+        if (lastAnalysisResult && latestRunPayload) {
+            drawRaySchematicDash(
+                lastAnalysisResult.thickness,
+                lastAnalysisResult.n_film,
+                lastAnalysisResult.n_sub,
+                latestRunPayload.angle_deg
+            );
+        }
+    }
+    if (idx === 2) {
+        setTimeout(() => { if (waferChart) waferChart.resize(); else renderWaferHeatmap(); }, 100);
+    }
+    if (idx === 3) {
+        setTimeout(() => { 
+            if (crystalRenderer) { 
+                const host = document.getElementById('viz-waterfall'); 
+                if (crystalCamera) {
+                    crystalCamera.aspect = host.clientWidth / host.clientHeight;
+                    crystalCamera.updateProjectionMatrix();
+                }
+                crystalRenderer.setSize(host.clientWidth, host.clientHeight); 
+            } else {
+                initCrystalLattice(); 
+            }
+        }, 100);
+    }
+    if (idx === 4) {
+        setTimeout(() => { if (fftChart) fftChart.resize(); else renderStandingWave(); }, 100);
+    }
+    if (idx === 5) {
+        setTimeout(() => { if (mseHeatmapChart) mseHeatmapChart.resize(); else renderDispersionCurve(); }, 100);
+    }
+}
+
+function initChart() {
+    const container = document.getElementById('spectrumCanvas');
+    if (!container) return;
+    spectrumChart = echarts.init(container, 'dark');
+
+    const option = {
+        backgroundColor: 'transparent',
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'cross', lineStyle: { color: 'rgba(56, 189, 248, 0.5)' } },
+            backgroundColor: 'rgba(15, 23, 42, 0.85)',
+            borderColor: 'rgba(56, 189, 248, 0.4)',
+            textStyle: { color: '#f8fafc' }
+        },
+        legend: { top: '3%', textStyle: { color: '#94a3b8' } },
+        grid: { left: '5%', right: '5%', bottom: '15%', top: '15%', containLabel: true },
+        dataZoom: [
+            { type: 'inside', start: 0, end: 100 },
+            { type: 'slider', bottom: '2%', height: 20, borderColor: 'transparent', 
+              fillerColor: 'rgba(14, 165, 233, 0.2)', textStyle: { color: '#94a3b8' } }
+        ],
+        xAxis: {
+            type: 'value',
+            name: '波数 (cm⁻¹)',
+            nameTextStyle: { color: '#94a3b8' },
+            splitLine: { show: true, lineStyle: { color: 'rgba(30, 41, 59, 0.6)' } },
+            axisLine: { lineStyle: { color: '#475569' } },
+            axisLabel: { color: '#94a3b8' }
+        },
+        yAxis: {
+            type: 'value',
+            name: '反射率 (%)',
+            nameTextStyle: { color: '#94a3b8' },
+            splitLine: { show: true, lineStyle: { color: 'rgba(30, 41, 59, 0.6)' } },
+            axisLine: { lineStyle: { color: '#475569' } },
+            axisLabel: { color: '#94a3b8' }
+        },
+        series: []
+    };
+
+    spectrumChart.setOption(option);
+    window.addEventListener('resize', () => spectrumChart.resize());
+}
+
+async function autoCutoff() {
+    const sel = document.getElementById('dataset_sel').value;
+    if(!sel) return showToast('先选择数据', true);
+    const [mat, ang] = sel.split('|');
+    try {
+        const res = await api.post('/api/suggest_cutoff', { material: mat, angle: parseFloat(ang) });
+        if(res.ok) {
+            document.getElementById('min_cutoff').value = Math.round(res.value);
+            showToast('已推算最佳起延波数');
+        }
+    } catch(e) { showToast(e.message, true); }
+}
+
+async function runAnalysis() {
+    const sel = document.getElementById('dataset_sel').value;
+    if(!sel) return showToast('请先选择或导入数据集', true);
+    
+    const [mat, ang] = sel.split('|');
+    const payload = {
+        material: mat,
+        angle_deg: parseFloat(ang),
+        min_cutoff: parseFloat(document.getElementById('min_cutoff').value),
+        n_film: parseFloat(document.getElementById('n_film').value),
+        n_sub: parseFloat(document.getElementById('n_sub').value),
+        n_min: parseFloat(document.getElementById('n_min').value),
+        n_max: parseFloat(document.getElementById('n_max').value),
+        peak_distance: parseInt(document.getElementById('peak_dist').value),
+        method: document.getElementById('method_sel').value,
+        inversion: document.getElementById('inversion_sel').value
+    };
+    latestRunPayload = payload;
+    
+    document.getElementById('loader').style.display = 'flex';
+    document.getElementById('result_terminal').innerText = '运算正在进行中，解析干涉条纹...\n求解逆斯涅尔相消方程...';
+    
+    try {
+        const res = await api.post('/api/analyze', payload);
+        lastAnalysisResult = {
+            thickness: res.thickness_um,
+            thickness_um: res.thickness_um,
+            n_film: res.n_film,
+            n_sub: res.n_sub,
+            angle: parseFloat(ang),
+            material: mat,
+            spectrum_plot_b64: res.spectrum_plot_b64 || '',
+            x: res.x || [],
+            y: res.y || [],
+            fit_y: res.fit_y || [],
+            peaks_x: res.peaks_x || [],
+            peaks_y: res.peaks_y || [],
+            fit_confidence: res.fit_confidence,
+            mse_final: res.mse_final,
+            // Carry over advanced analytical data
+            swave_x: res.swave_x,
+            swave_y: res.swave_y,
+            swave_z: res.swave_z,
+            disp_x: res.disp_x,
+            disp_n: res.disp_n,
+            disp_k: res.disp_k,
+            disp_ref_n: res.disp_ref_n,
+            disp_upper: res.disp_upper,
+            disp_lower: res.disp_lower
+        };
+        document.getElementById('btn-sync-lab').style.display = 'inline-flex';
+        
+        // 光谱：使用 ECharts WebGL 极速渲染
+        updateSpectrumPlot(res);
+        
+        // Update KPIs with GSAP Animation
+        gsap.to('#kpi-thick', { innerText: res.thickness_um, duration: 2, snap: { innerText: 0.001 }, onUpdate: function() { document.getElementById('kpi-thick').innerText = this.targets()[0].innerText + ' μm'; } });
+        gsap.to('#kpi-conf', { innerText: res.fit_confidence, duration: 1.5, snap: { innerText: 0.1 }, onUpdate: function() { document.getElementById('kpi-conf').innerText = this.targets()[0].innerText + '%'; } });
+        gsap.to('#kpi-peaks', { innerText: res.peak_count, duration: 1, snap: { innerText: 1 } });
+        gsap.to('#kpi-delta', { innerText: res.avg_delta_nu, duration: 1.5, snap: { innerText: 0.01 } });
+        
+        // Update Terminal
+        const term = `> 运算完成 [OK]
+> 参数: n_film=${res.n_film.toFixed(3)}, n_sub=${res.n_sub.toFixed(3)}
+> 获取有效波峰: ${res.peak_count}个. 平均间距: ${res.avg_delta_nu.toFixed(2)} cm⁻¹
+> MSE Final 指标: ${res.mse_final.toFixed(5)}
+> ----
+> 核心结论: 拟定厚度 ${res.thickness_um.toFixed(3)} μm (相对介电常数 εr≈${res.epsilon_r.toFixed(2)})`;
+        document.getElementById('result_terminal').innerText = term;
+        
+        // Update 3D（材料配色 + 光路）
+        refresh3DFromState();
+        drawRaySchematicDash(res.thickness_um, res.n_film, res.n_sub, payload.angle_deg);
+        
+        showToast('分析完成并已归档');
+    } catch(e) {
+        document.getElementById('result_terminal').innerText = '运算错误: ' + e.message;
+        showToast(e.message, true);
+    } finally {
+        document.getElementById('loader').style.display = 'none';
+    }
+}
+
+function syncToLab() {
+    if(!lastAnalysisResult) return showToast('没有可导入的结果', true);
+    const thickness = Number(lastAnalysisResult.thickness);
+    const n_film = Number(lastAnalysisResult.n_film);
+    const n_sub = Number(lastAnalysisResult.n_sub);
+    const angle = Number(lastAnalysisResult.angle);
+    const material = lastAnalysisResult.material || '';
+    try {
+        // 避免把超大的 base64 图片塞进 sessionStorage 导致浏览器无响应/容量溢出
+        const slim = {
+            thickness,
+            n_film,
+            n_sub,
+            angle,
+            material,
+            x: lastAnalysisResult.x || [],
+            y: lastAnalysisResult.y || [],
+            fit_y: lastAnalysisResult.fit_y || [],
+            peaks_x: lastAnalysisResult.peaks_x || [],
+            peaks_y: lastAnalysisResult.peaks_y || [],
+            fit_confidence: lastAnalysisResult.fit_confidence,
+            mse_final: lastAnalysisResult.mse_final
+        };
+        sessionStorage.setItem('epi_lab_import', JSON.stringify({
+            imported_at: Date.now(),
+            analysis: slim
+        }));
+    } catch (e) {
+        console.warn('Failed to cache lab import payload', e);
+    }
+    showToast('正在导入到实验室…');
+    window.location.assign(`/simulator?thickness=${thickness.toFixed(4)}&n=${n_film.toFixed(3)}&nsub=${n_sub.toFixed(3)}&angle=${angle}&material=${encodeURIComponent(material)}`);
+}
+
+function updateSpectrumPlot(res) {
+    if (!spectrumChart) return;
+    
+    // ECharts update logic
+    const rawData = res.x.map((x,i) => [x, res.y[i]]);
+    const fitData = res.x.map((x,i) => [x, res.fit_y[i]]);
+    const peaks = res.peaks_x.map((x,i) => [x, res.peaks_y[i]]);
+    
+    spectrumChart.setOption({
+        series: [
+            {
+                name: '实验光谱',
+                type: 'line',
+                data: rawData,
+                showSymbol: false,
+                lineStyle: { width: 1.5, color: '#0ea5e9' },
+                areaStyle: {
+                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                        { offset: 0, color: 'rgba(14, 165, 233, 0.4)' },
+                        { offset: 1, color: 'rgba(14, 165, 233, 0.05)' }
+                    ])
+                },
+                large: true, // Enable WebGL large data optimization implicitly
+                largeThreshold: 5000
+            },
+            {
+                name: '理论拟合',
+                type: 'line',
+                data: fitData,
+                showSymbol: false,
+                lineStyle: { width: 2, type: 'dashed', color: '#f59e0b' }
+            },
+            {
+                name: '干涉峰特征',
+                type: 'scatter',
+                data: peaks,
+                symbolSize: 10,
+                itemStyle: { color: '#ef4444', borderColor: '#f8fafc', borderWidth: 1.5 }
+            }
+        ]
+    });
+}
+
+// ---- Modals & Import ----
+function openImportModal() { document.getElementById('importModal').style.display = 'flex'; }
+function closeImportModal() { document.getElementById('importModal').style.display = 'none'; }
+
+async function submitImport(e) {
+    e.preventDefault();
+    const btn = document.getElementById('btn-import-submit');
+    btn.disabled = true; btn.innerText = '导入中...';
+    
+    const formData = new FormData();
+    formData.append('material', document.getElementById('imp_material').value);
+    formData.append('angle', document.getElementById('imp_angle').value);
+    formData.append('replace', document.getElementById('imp_replace').checked);
+    formData.append('file', document.getElementById('imp_file').files[0]);
+    
+    try {
+        const res = await fetch('/api/import', { method: 'POST', body: formData });
+        const data = await res.json();
+        if(!res.ok) throw new Error(data.error);
+        
+        showToast(`导入成功: 写入 ${data.count} 行数据`);
+        closeImportModal();
+        await loadInitialData();
+        
+        // Auto select the new target
+        const d_sel = document.getElementById('dataset_sel');
+        for(let i=0; i<d_sel.options.length; i++){
+            if(d_sel.options[i].text === data.label) d_sel.selectedIndex = i;
+        }
+    } catch(err) {
+        showToast(err.message, true);
+    } finally {
+        btn.disabled = false; btn.innerText = '执行导入';
+    }
+}
+
+// ---- Advanced 3D Engine (Three.js & ECharts 2D) ----
+let waferChart = null;
+let fftChart = null;
+let mseHeatmapChart = null;
+let crystalRenderer = null;
+
+function renderStandingWave() {
+    if (!lastAnalysisResult || !lastAnalysisResult.swave_z) {
+        document.getElementById('fftCanvas').innerHTML = '<div style="display:flex; height:100%; align-items:center; justify-content:center; color:var(--text-muted);">驻波仿真数据加载中...</div>';
+        return;
+    }
+    if (!fftChart) fftChart = echarts.init(document.getElementById('fftCanvas'), 'dark');
+    fftChart.resize();
+    
+    const xData = lastAnalysisResult.swave_x.map(v => v.toFixed(0));
+    const yData = lastAnalysisResult.swave_y.map(v => v.toFixed(2));
+    const heatmapData = [];
+    lastAnalysisResult.swave_z.forEach((row, yi) => {
+        row.forEach((val, xi) => {
+            heatmapData.push([xi, yi, val]);
+        });
+    });
+
+    const option = {
+        backgroundColor: 'transparent',
+        tooltip: { position: 'top', formatter: p => `波数: ${xData[p.value[0]]} cm⁻¹<br>深度: ${yData[p.value[1]]} μm<br>场强: ${p.value[2].toFixed(2)}` },
+        grid: { left: '8%', right: '5%', bottom: '15%', top: '15%', containLabel: true },
+        xAxis: { type: 'category', data: xData, name: '波数 (cm⁻¹)', splitArea: { show: true } },
+        yAxis: { type: 'category', data: yData, name: '薄膜深度 (μm)' },
+        visualMap: {
+            min: 0.5, max: 2.5, calculable: true,
+            orient: 'vertical', right: '1%', top: 'center',
+            inRange: { color: ['#020617', '#1e3a8a', '#3b82f6', '#10b981', '#fbbf24', '#ef4444'] }
+        },
+        series: [{
+            name: 'Standing Wave', type: 'heatmap', data: heatmapData,
+            progressive: 1000, animation: false
+        }]
+    };
+    fftChart.setOption(option, true);
+}
+
+function renderDispersionCurve() {
+    if (!lastAnalysisResult || !lastAnalysisResult.disp_n) {
+        document.getElementById('heatmapCanvas').innerHTML = '<div style="display:flex; height:100%; align-items:center; justify-content:center; color:var(--text-muted);">色散模型加载中...</div>';
+        return;
+    }
+    if (!mseHeatmapChart) mseHeatmapChart = echarts.init(document.getElementById('heatmapCanvas'), 'dark');
+    mseHeatmapChart.resize();
+    
+    const x = lastAnalysisResult.disp_x;
+    const n = lastAnalysisResult.disp_n;
+    const k = lastAnalysisResult.disp_k;
+    const refN = lastAnalysisResult.disp_ref_n;
+    const upper = lastAnalysisResult.disp_upper;
+    const lower = lastAnalysisResult.disp_lower;
+    
+    const option = {
+        backgroundColor: 'transparent',
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(15, 23, 42, 0.9)',
+            borderColor: 'rgba(56, 189, 248, 0.4)',
+            textStyle: { color: '#f8fafc' },
+            formatter: p => {
+                let s = `波数: ${p[0].value[0].toFixed(0)} cm⁻¹<br/>`;
+                p.forEach(it => {
+                    if (it.seriesName !== 'Confidence') {
+                        s += `${it.marker} ${it.seriesName}: ${it.value[1].toFixed(4)}<br/>`;
+                    }
+                });
+                return s;
+            }
+        },
+        legend: { data: ['折射率 n', '消光系数 k', '理论参考 n'], top: '2%', textStyle: { color: '#94a3b8' } },
+        grid: { left: '8%', right: '8%', bottom: '15%', top: '15%', containLabel: true },
+        xAxis: { type: 'value', name: '波数 (cm⁻¹)', nameLocation: 'middle', nameGap: 30, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } },
+        yAxis: [
+            { type: 'value', name: '折射率 n', scale: true, axisLabel: { color: '#38bdf8' }, splitLine: { lineStyle: { color: 'rgba(56, 189, 248, 0.1)' } } },
+            { type: 'value', name: '消光系数 k', scale: true, axisLabel: { color: '#fb7185' }, splitLine: { show: false } }
+        ],
+        series: [
+            {
+                name: 'Confidence', type: 'line', 
+                data: x.map((v, i) => [v, upper[i]]),
+                lineStyle: { opacity: 0 }, stack: 'conf', silent: true
+            },
+            {
+                name: 'Confidence', type: 'line', 
+                data: x.map((v, i) => [v, lower[i] - upper[i]]),
+                lineStyle: { opacity: 0 }, stack: 'conf', 
+                areaStyle: { color: 'rgba(56, 189, 248, 0.15)' }, silent: true
+            },
+            {
+                name: '折射率 n', type: 'line', data: x.map((v, i) => [v, n[i]]),
+                showSymbol: false, smooth: true, lineStyle: { width: 3, color: '#38bdf8' }
+            },
+            {
+                name: '消光系数 k', type: 'line', yAxisIndex: 1, data: x.map((v, i) => [v, k[i]]),
+                showSymbol: false, smooth: true, lineStyle: { width: 2, color: '#f43f5e', type: 'dashed' }
+            },
+            {
+                name: '理论参考 n', type: 'line', data: x.map((v, i) => [v, refN[i]]),
+                showSymbol: false, lineStyle: { width: 1, color: '#94a3b8', type: 'dotted' }
+            }
+        ]
+    };
+    mseHeatmapChart.setOption(option, true);
+}
+
+function renderWaferHeatmap() {
+    if (!waferChart) {
+        waferChart = echarts.init(document.getElementById('wafer3DCanvas'), 'dark');
+    }
+    waferChart.resize();
+    
+    // Base thickness
+    const baseT = lastAnalysisResult ? lastAnalysisResult.thickness : 1.0;
+    
+    // Generate 2D Heatmap Wafer Surface data
+    const data = [];
+    const gridSize = 40; // 40x40 grid
+    for (let i = 0; i <= gridSize; i++) {
+        for (let j = 0; j <= gridSize; j++) {
+            // Map to -1 to 1
+            const x = (i / gridSize) * 2 - 1;
+            const y = (j / gridSize) * 2 - 1;
+            const r2 = x*x + y*y;
+            
+            if (r2 <= 1) {
+                // Edge bow effect simulation (center is thicker, edges thinner)
+                const bow = r2 * 0.03 * baseT; 
+                // Add tiny gaussian variation
+                const noise = (Math.random() - 0.5) * 0.002;
+                const thick = baseT - bow + noise;
+                data.push([i, j, thick]);
+            } else {
+                data.push([i, j, '-']);
+            }
+        }
+    }
+    
+    const option = {
+        backgroundColor: 'transparent',
+        tooltip: { formatter: p => `厚度: ${p.value[2] !== '-' ? p.value[2].toFixed(4) : '-'} μm` },
+        visualMap: {
+            show: true, min: baseT * 0.94, max: baseT * 1.02,
+            inRange: { color: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444'] }, // Blue to Red heatmap
+            textStyle: { color: '#94a3b8' }, right: '5%', bottom: '5%',
+            calculable: true,
+            formatter: (v) => v.toFixed(3)
+        },
+        xAxis: { type: 'category', show: false },
+        yAxis: { type: 'category', show: false },
+        series: [{
+            type: 'heatmap',
+            data: data,
+            itemStyle: {
+                borderColor: 'transparent'
+            },
+            emphasis: {
+                itemStyle: {
+                    shadowBlur: 10,
+                    shadowColor: 'rgba(0, 0, 0, 0.5)'
+                }
+            }
+        }]
+    };
+    waferChart.setOption(option, true);
+    setTimeout(() => waferChart.resize(), 50);
+}
+
+function initCrystalLattice() {
+    const container = document.getElementById('waterfall3DCanvas');
+    if (!container) return;
+    
+    // Set text label
+    const matName = (lastAnalysisResult && lastAnalysisResult.material) ? lastAnalysisResult.material : "SiC";
+    const descEl = document.getElementById('crystal-desc');
+    if (descEl) descEl.innerText = `${matName} 晶格构型三维模拟`;
+    
+    if (crystalRenderer) {
+        // If already exists, just recreate scene or update colors
+        buildCrystalScene(matName);
+        return;
+    }
+    
+    // Initialize Three.js
+    crystalScene = new THREE.Scene();
+    crystalScene.background = new THREE.Color('#020617'); // Deep Space
+    
+    crystalCamera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+    crystalCamera.position.z = 25;
+    crystalCamera.position.x = 10;
+    crystalCamera.position.y = 10;
+    crystalCamera.lookAt(0, 0, 0);
+    
+    crystalRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    crystalRenderer.setSize(container.clientWidth, container.clientHeight);
+    crystalRenderer.setPixelRatio(window.devicePixelRatio);
+    container.innerHTML = ''; // clear old Echarts canvas
+    container.appendChild(crystalRenderer.domElement);
+    
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    crystalScene.add(ambientLight);
+    
+    const dirLight1 = new THREE.DirectionalLight(0x38bdf8, 0.8);
+    dirLight1.position.set(10, 20, 10);
+    crystalScene.add(dirLight1);
+    
+    const dirLight2 = new THREE.DirectionalLight(0x8b5cf6, 0.6);
+    dirLight2.position.set(-10, -10, -10);
+    crystalScene.add(dirLight2);
+    
+    buildCrystalScene(matName);
+    
+    // Animation Loop
+    function animate() {
+        requestAnimationFrame(animate);
+        if (crystalScene) {
+            crystalScene.rotation.y += 0.005;
+            crystalScene.rotation.x += 0.002;
+        }
+        crystalRenderer.render(crystalScene, crystalCamera);
+    }
+    animate();
+}
+
+function buildCrystalScene(matName) {
+    if (!crystalScene) return;
+    
+    // Clear old objects but keep lights
+    const toRemove = [];
+    crystalScene.children.forEach(child => {
+         if (child instanceof THREE.Group || child instanceof THREE.Mesh) {
+             toRemove.push(child);
+         }
+    });
+    toRemove.forEach(child => crystalScene.remove(child));
+
+    const group = new THREE.Group();
+    
+    // Define Atom Materials based on material
+    let colorA = 0x38bdf8; // Blue-ish
+    let colorB = 0x94a3b8; // Grey
+    let radiusA = 0.8;
+    let radiusB = 0.6;
+    
+    if (matName.toUpperCase().includes('SIC')) {
+        colorA = 0x22d3ee; // Si (Cyan)
+        colorB = 0x1e293b; // C (Dark Grey)
+        radiusA = 0.9;
+        radiusB = 0.5;
+    } else if (matName.toUpperCase().includes('GAN')) {
+        colorA = 0xa78bfa; // Ga (Purple)
+        colorB = 0xe2e8f0; // N (Silver)
+        radiusA = 1.0;
+        radiusB = 0.6;
+    } else if (matName.toUpperCase() === 'SI') {
+        colorA = 0x38bdf8; // Si Only
+        colorB = 0x38bdf8;
+    }
+
+    const sphereGeomA = new THREE.SphereGeometry(radiusA, 32, 32);
+    const sphereGeomB = new THREE.SphereGeometry(radiusB, 32, 32);
+    
+    const matA = new THREE.MeshStandardMaterial({ 
+        color: colorA, roughnes: 0.2, metalness: 0.8 
+    });
+    const matB = new THREE.MeshStandardMaterial({ 
+        color: colorB, roughnes: 0.3, metalness: 0.6 
+    });
+    const bondMat = new THREE.MeshStandardMaterial({ 
+        color: 0x475569, roughnes: 0.5, metalness: 0.5, opacity: 0.7, transparent: true
+    });
+    
+    // Generate a simple 3x3x3 generic cubic/diamond-like lattice for visual effect
+    const size = 3;
+    const spacing = 4;
+    const offset = (size - 1) * spacing / 2;
+    
+    const atoms = [];
+    
+    for (let x = 0; x < size; x++) {
+        for (let y = 0; y < size; y++) {
+            for (let z = 0; z < size; z++) {
+                const isTypeA = (x+y+z) % 2 === 0;
+                const mesh = new THREE.Mesh(isTypeA ? sphereGeomA : sphereGeomB, isTypeA ? matA : matB);
+                mesh.position.set(x * spacing - offset, y * spacing - offset, z * spacing - offset);
+                group.add(mesh);
+                atoms.push({pos: mesh.position, mesh: mesh});
+            }
+        }
+    }
+    
+    // Add bonds (cylinders)
+    const bondGeom = new THREE.CylinderGeometry(0.15, 0.15, spacing, 16);
+    // X bonds
+    for(let x=0; x<size-1; x++) {
+        for(let y=0; y<size; y++) {
+            for(let z=0; z<size; z++) {
+                const bond = new THREE.Mesh(bondGeom, bondMat);
+                bond.position.set((x+0.5)*spacing - offset, y*spacing - offset, z*spacing - offset);
+                bond.rotation.z = Math.PI / 2;
+                group.add(bond);
+            }
+        }
+    }
+    // Y bonds
+    for(let x=0; x<size; x++) {
+        for(let y=0; y<size-1; y++) {
+            for(let z=0; z<size; z++) {
+                const bond = new THREE.Mesh(bondGeom, bondMat);
+                bond.position.set(x*spacing - offset, (y+0.5)*spacing - offset, z*spacing - offset);
+                group.add(bond);
+            }
+        }
+    }
+    // Z bonds
+    for(let x=0; x<size; x++) {
+        for(let y=0; y<size; y++) {
+            for(let z=0; z<size-1; z++) {
+                const bond = new THREE.Mesh(bondGeom, bondMat);
+                bond.position.set(x*spacing - offset, y*spacing - offset, (z+0.5)*spacing - offset);
+                bond.rotation.x = Math.PI / 2;
+                group.add(bond);
+            }
+        }
+    }
+
+    crystalScene.add(group);
+}
+
+// Auto-refresh hook
+function refresh3DFromState() {
+    if (document.getElementById('viz-wafer').style.display === 'block') setTimeout(renderWaferHeatmap, 50);
+    if (document.getElementById('viz-waterfall').style.display === 'block') setTimeout(initCrystalLattice, 50);
+    if (document.getElementById('viz-fft').style.display === 'block') setTimeout(renderStandingWave, 50);
+    if (document.getElementById('viz-heatmap').style.display === 'block') setTimeout(renderDispersionCurve, 50);
+}
+
+function resizeRayCanvas() {
+    const c = document.getElementById('rayCanvasDash');
+    const host = document.getElementById('viz-ray');
+    if (!c || !host) return;
+    const w = Math.max(320, Math.floor(host.clientWidth));
+    const h = Math.max(220, Math.floor(host.clientHeight));
+    if (c.width !== w) c.width = w;
+    if (c.height !== h) c.height = h;
+}
+
+function drawRaySchematicDash(thickness, nFilm, nSub, angleDeg) {
+    const canvas = document.getElementById('rayCanvasDash');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    const margin = w * 0.06;
+    const airH = h * 0.28;
+    const ySub = h * 0.78;
+    // 使用对数缩放以适配 0-100μm 的大跨度动态视觉效果
+    const filmH = 15 + (Math.log1p(thickness) / Math.log1p(100.0)) * 140;
+    const yFilmTop = ySub - filmH;
+    const yAirTop = margin * 1.8;
+    const xLeft = margin;
+    const xRight = w - margin;
+
+    const bg = ctx.createLinearGradient(0, 0, 0, h);
+    bg.addColorStop(0, '#020617'); // Very deep space blue
+    bg.addColorStop(1, '#0f172a'); // Lighter panel blue
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // Draw Substrate
+    ctx.fillStyle = 'rgba(30, 41, 59, 0.4)';
+    ctx.fillRect(xLeft, ySub, xRight - xLeft, h - ySub - margin);
+    // Draw Substrate top border glowing line
+    ctx.fillStyle = 'rgba(139, 92, 246, 0.5)';
+    ctx.fillRect(xLeft, ySub, xRight - xLeft, 2);
+
+    // Draw Thin Film
+    const filmGrad = ctx.createLinearGradient(0, yFilmTop, 0, ySub);
+    filmGrad.addColorStop(0, 'rgba(14, 165, 233, 0.1)');
+    filmGrad.addColorStop(1, 'rgba(14, 165, 233, 0.25)');
+    ctx.fillStyle = filmGrad;
+    ctx.fillRect(xLeft, yFilmTop, xRight - xLeft, filmH);
+    
+    // Draw Thin Film top border glowing line
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = 'rgba(56, 189, 248, 0.8)';
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.6)';
+    ctx.fillRect(xLeft, yFilmTop, xRight - xLeft, 1.5);
+    ctx.shadowBlur = 0; // reset for text
+
+    // Labels
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '500 12px Inter';
+    ctx.fillText('空气 (Air) n₀≈1.0', xLeft + 8, yAirTop + 12);
+    ctx.fillText(`外延层 (Film) n≈${nFilm.toFixed(2)}  d≈${thickness.toFixed(3)} μm`, xLeft + 8, yFilmTop + 16);
+    ctx.fillText(`衬底 (Substrate) n≈${nSub.toFixed(2)}`, xLeft + 8, ySub + 18);
+
+    const entryX = xLeft + (xRight - xLeft) * 0.28;
+    const n0 = 1.0;
+    const theta0 = angleDeg * Math.PI / 180;
+    const theta1 = Math.asin(Math.max(-1, Math.min(1, (n0 * Math.sin(theta0)) / Math.max(nFilm, 1.01))));
+    const rayLenAir = (yFilmTop - yAirTop) * 1.35;
+    const xAir0 = entryX - rayLenAir * Math.sin(theta0);
+    const yAir0 = yFilmTop - rayLenAir * Math.cos(theta0);
+
+    const drawSeg = (x1, y1, x2, y2, color, width, dash = [], blur = 0, blurColor = '') => {
+        ctx.beginPath();
+        ctx.setLineDash(dash);
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        if (blur > 0) {
+            ctx.shadowBlur = blur;
+            ctx.shadowColor = blurColor || color;
+        } else {
+            ctx.shadowBlur = 0;
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.shadowBlur = 0;
+    };
+
+    // Normal line (Perpendicular)
+    drawSeg(entryX, yFilmTop - 64, entryX, ySub + 26, 'rgba(148,163,184,0.35)', 1, [5, 5]);
+    
+    // Main Incident Ray (Glowing Neon Cyan Laser)
+    drawSeg(xAir0, yAir0, entryX, yFilmTop, 'rgba(14, 165, 233, 0.95)', 2.5, [10, 0], 12, '#38bdf8');
+
+    let x = entryX;
+    let y = yFilmTop + 2;
+    let ux = Math.sin(theta1);
+    let uy = Math.cos(theta1);
+    let outCount = 0;
+    
+    for (let bounce = 0; bounce < 16; bounce++) {
+        if (Math.abs(uy) < 1e-9) break;
+        const tHit = uy > 0 ? (ySub - y) / uy : (yFilmTop - y) / uy;
+        if (tHit <= 0) break;
+        const x2 = x + ux * tHit;
+        const y2 = y + uy * tHit;
+        if (x2 < xLeft - 10 || x2 > xRight + 10) break;
+
+        const alpha = Math.max(0.15, 0.9 - bounce * 0.1);
+        const blurIntensity = bounce === 0 ? 10 : Math.max(0, 6 - bounce);
+        
+        // Internal reflecting rays
+        drawSeg(x, y, x2, y2, `rgba(56, 189, 248, ${alpha})`, bounce === 0 ? 2 : 1.5, [8, 4], blurIntensity, '#38bdf8');
+        
+        // Emergent rays (Reflected to detector)
+        if (Math.abs(y2 - yFilmTop) < 3.5 && outCount < 6) {
+            outCount += 1;
+            const outLen = (yFilmTop - yAirTop) * 1.05;
+            const dx = (outCount - 1) * 9;
+            drawSeg(
+                x2 + dx * 0.45,
+                yFilmTop,
+                x2 - outLen * Math.sin(theta0) + dx,
+                yFilmTop - outLen * Math.cos(theta0),
+                `rgba(139, 92, 246, ${Math.max(0.15, 0.85 - outCount * 0.15)})`, // Purple glow for reflected rays
+                1.5,
+                [8, 4],
+                blurIntensity,
+                '#c084fc'
+            );
+        }
+        x = x2;
+        y = y2;
+        uy = -uy;
+    }
+}
+</script>
+{% endblock %}

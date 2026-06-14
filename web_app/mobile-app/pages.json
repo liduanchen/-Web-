@@ -1,0 +1,70 @@
+{
+  "pages": [
+    {
+      "path": "pages/dashboard/dashboard",
+      "style": {
+        "navigationBarTitleText": "智能分析面板"
+      }
+    },
+    {
+      "path": "pages/simulator/simulator",
+      "style": {
+        "navigationBarTitleText": "全景仿真器"
+      }
+    },
+    {
+      "path": "pages/optics/optics",
+      "style": {
+        "navigationBarTitleText": "光路示意"
+      }
+    },
+    {
+      "path": "pages/history/history",
+      "style": {
+        "navigationBarTitleText": "分析记录",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/materials/materials",
+      "style": {
+        "navigationBarTitleText": "材料库",
+        "enablePullDownRefresh": true
+      }
+    }
+  ],
+  "tabBar": {
+    "color": "#64748b",
+    "selectedColor": "#0ea5e9",
+    "backgroundColor": "#0f172a",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/dashboard/dashboard",
+        "text": "分析"
+      },
+      {
+        "pagePath": "pages/simulator/simulator",
+        "text": "仿真"
+      },
+      {
+        "pagePath": "pages/optics/optics",
+        "text": "光路"
+      },
+      {
+        "pagePath": "pages/history/history",
+        "text": "历史"
+      },
+      {
+        "pagePath": "pages/materials/materials",
+        "text": "材料"
+      }
+    ]
+  },
+  "globalStyle": {
+    "navigationBarTextStyle": "white",
+    "navigationBarTitleText": "EPI Vision",
+    "navigationBarBackgroundColor": "#0f172a",
+    "backgroundColor": "#020617"
+  }
+}

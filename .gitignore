@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.idea/
+.claude/
+*.db
+scratch/
+unpackage/
+node_modules/
+.hbuilderx/

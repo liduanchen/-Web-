@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="blue">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}EPI-Vision{% endblock %}</title>
+    <!-- Three.js, ECharts & GSAP -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts-gl/2.0.9/echarts-gl.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <!-- Icon SVG -->
+                    <svg viewBox="0 0 24 24" width="28" height="28" fill="url(#grad)" stroke="currentColor" stroke-width="1.5">
+                        <defs>
+                            <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                              <stop offset="0%" style="stop-color:var(--accent-primary);stop-opacity:1" />
+                              <stop offset="100%" style="stop-color:var(--accent-secondary);stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <path stroke="none" d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                    </svg>
+                    EPI-Vision <span>PRO</span>
+                </div>
+            </div>
+            
+            <ul class="nav-links">
+                <a href="/" class="nav-item">
+                    <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+                    智能分析面板
+                </a>
+                <a href="/materials" class="nav-item">
+                    <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                    折射率数据库
+                </a>
+                <a href="/simulator" class="nav-item">
+                    <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM8.5 15H7.3l-2.55-3.5V15H3.5V9h1.25l2.5 3.5V9H8.5v6zm5-4.74H11v1.12h2.5v1.26H11v1.11h2.5V15h-4V9h4v1.26zm7 3.74c0 1.1-.9 2-2 2h-2.75V9h2.75c1.1 0 2 .9 2 2v2zM17 10.5h-1.25v2.5H17v-2.5z"/></svg>
+                    全景物理仿真器
+                </a>
+                <a href="/history" class="nav-item">
+                    <svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+                    分析记录溯源
+                </a>
+            </ul>
+            
+            <div class="sidebar-footer">
+                <div class="theme-switcher">
+                    <button class="theme-btn t-blue active" data-theme="blue" title="Deep Space"></button>
+                    <button class="theme-btn t-emerald" data-theme="emerald" title="Emerald Glass"></button>
+                    <button class="theme-btn t-obsidian" data-theme="obsidian" title="Obsidian Neon"></button>
+                </div>
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 12px;">
+                    EPI-Vision Analytics &copy; 2026
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="top-bar">
+                <div>
+                    <h1 class="page-title">{% block page_title %}{% endblock %}</h1>
+                    <div class="page-subtitle">{% block page_subtitle %}{% endblock %}</div>
+                </div>
+                {% block top_actions %}{% endblock %}
+            </div>
+            
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <!-- APIs & Scripting -->
+    <script src="{{ url_for('static', filename='js/api.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
